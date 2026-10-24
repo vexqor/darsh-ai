@@ -1,5 +1,7 @@
 {
   "name": "darsh-ai",
+  "main": "index.js",
   "compatibility_date": "2026-10-24",
+  "ai": { "binding": "AI" },
   "assets": { "directory": "./public" }
 }
