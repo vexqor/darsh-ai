@@ -950,7 +950,7 @@ async function runFullPdfGrammarFix(command){
   try{
     const tok=await Auth.token();
     if(!tok){log('Bhai, session expire ho gaya. Dobara login kar le.');openAuth('login');setStatus('Login required','red');return}
-    const collected=[],jobs=[];let pagesWithText=0;const originalDoc=pdfDoc;
+    const collected=[],jobs=[];let pagesWithText=0,skippedLongItems=0;const originalDoc=pdfDoc;
     for(let pn=1;pn<=total;pn++){
       if(originalDoc!==pdfDoc)throw new Error('PDF changed while grammar correction was running');
       setStatus(`Grammar check: page ${pn} of ${total}…`,'amber');
@@ -959,15 +959,16 @@ async function runFullPdfGrammarFix(command){
       const items=tc.items.filter(it=>typeof it.str==='string'&&it.str.trim()).map(it=>it.str);
       if(!items.length)continue;
       pagesWithText++;
-      // Keep the complete text items separate so the editor can match each correction exactly.
-      // A single very long page is divided into safe chunks without splitting a text item.
+      // Keep text items intact so returned replacements can be matched safely.
+      // Smaller batches reduce model latency and request timeouts. Extremely long single
+      // text items are skipped rather than split, because splitting would make edits unsafe.
       const chunks=[];let batch=[],len=0;
       for(const item of items){
-        if(item.length>2200){
-          if(batch.length){chunks.push(batch);batch=[];len=0}
-          chunks.push([item]);continue;
+        if(item.length>900){
+          skippedLongItems++;
+          continue;
         }
-        if(len+item.length+1>2200&&batch.length){chunks.push(batch);batch=[];len=0}
+        if(len+item.length+1>900&&batch.length){chunks.push(batch);batch=[];len=0}
         batch.push(item);len+=item.length+1;
       }
       if(batch.length)chunks.push(batch);
@@ -996,9 +997,10 @@ async function runFullPdfGrammarFix(command){
     if(failed)throw failed;
     collected.sort((a,b)=>a.page-b.page);
     if(!pagesWithText){log('Selectable text nahi mila bhai. Agar PDF scanned images se bani hai, pehle OCR run karna padega.');return}
-    if(!collected.length){log(`Bhai, ${total} pages check kar liye. Koi safe, clearly match hone wali grammar/spelling correction nahi mili. Scanned/image-only pages text extraction mein include nahi hote.`);return}
+    if(!collected.length){log(`Bhai, ${total} pages check kar liye. Koi safe, clearly match hone wali grammar/spelling correction nahi mili. Scanned/image-only pages text extraction mein include nahi hote.${skippedLongItems?` ${skippedLongItems} extra-long text item(s) skip hue taaki unsafe edits na hon.`:''}`);return}
     if(CHARGE_AI_ON_CLIENT)await Usage.charge('ai');
     addDarshHistory(command,`Checked all ${total} PDF pages for grammar. Found ${collected.length} proposed correction(s).`);
+    if(skippedLongItems)log(`Note: ${skippedLongItems} extra-long text item(s) were skipped for safety; review those manually.`);
     await applyAiReplacements(collected,`Full-PDF grammar correction: ${collected.length} proposed change(s)`);
   }catch(err){
     console.error('Full PDF grammar correction failed:',err);
@@ -1882,4 +1884,3 @@ window.addEventListener('DOMContentLoaded',()=>{
 </script>
 </body>
 </html>
-
