@@ -1136,8 +1136,19 @@ async function searchLoadedPdf(term){
       while((m=re.exec(text))!==null){count++;if(!m[0].length)re.lastIndex++}
       if(count){matches.push({page:pn,count});totalOccurrences+=count}
     }
-    if(!matches.length)log(`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. Selectable text mein “${term}” nahi mila. Agar pages scanned images hain, unke liye OCR chahiye.`);
-    else log(`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. “${term}” ${totalOccurrences} baar mila, ${matches.length} page(s) par: ${matches.map(x=>`Page ${x.page} (${x.count} occurrence${x.count===1?'':'s'})`).join(', ')}. Scanned/image-only pages ka text OCR ke bina search nahi ho sakta.`);
+    if(!matches.length){log(`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. Selectable text mein “${term}” nahi mila. Agar pages scanned images hain, unke liye OCR chahiye.`);return true;}
+    // Render a safe interactive result card. Page buttons jump directly to the matching page;
+    // Highlight All opens the editor's existing Find panel and lists the individual text matches.
+    const feed=$('feed'),card=document.createElement('div'),head=document.createElement('div'),body=document.createElement('div'),actions=document.createElement('div'),pagesBox=document.createElement('div');
+    card.className='p-3 rounded-xl leading-relaxed bg-slate-900/60 border border-white/5 text-slate-300 mr-4';
+    head.className='text-[10px] text-cyan-400 font-bold mb-1';head.textContent='DARSH';
+    body.className='text-sm whitespace-pre-wrap';body.textContent=`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. “${term}” ${totalOccurrences} baar mila, ${matches.length} page(s) par. Scanned/image-only pages ka text OCR ke bina search nahi ho sakta.`;
+    actions.className='flex flex-wrap gap-2 mt-3';pagesBox.className='flex flex-wrap gap-2 mt-2';
+    const mkBtn=(label,fn)=>{const b=document.createElement('button');b.type='button';b.className='px-3 py-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 text-cyan-200 text-xs font-semibold hover:bg-cyan-500/20';b.textContent=label;b.addEventListener('click',fn);return b;};
+    actions.append(mkBtn('Highlight All / View Matches',async()=>{toggleFR(true);$('frFind').value=term;$('frCase').checked=false;await frFind();}));
+    actions.append(mkBtn('First Match',async()=>{cur=matches[0].page;await renderPage();}));
+    for(const m of matches){pagesBox.append(mkBtn(`Page ${m.page} · ${m.count}`,async()=>{if(originalDoc!==pdfDoc)return;cur=m.page;await renderPage();}));}
+    card.append(head,body,actions,pagesBox);feed.appendChild(card);feed.scrollTop=feed.scrollHeight;
     return true;
   }catch(err){console.error('Local PDF search failed:',err);log('PDF ko poora search nahi kar paya: '+(err.message||'unknown error')+'. Koi result confirm nahi kiya gaya.');return true}
   finally{const current=$('statusText')?.textContent||'';if(!/failed|error|required/i.test(current))setStatus(pdfDoc?`Loaded (${total} pages)`:'Ready','emerald')}
