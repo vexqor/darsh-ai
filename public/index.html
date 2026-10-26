@@ -1104,6 +1104,45 @@ async function tryWorkflowCommand(q){
   return true;
 }
 
+
+// Search the loaded PDF locally, page by page. This avoids sending a partial text
+// extract to AI for simple questions such as "pure PDF mein applied kahin likha hai?".
+function extractLocalSearchTerm(command){
+  const q=String(command||'').trim();
+  const quoted=q.match(/["']([^"']{1,100})["']/);
+  if(quoted && /\b(find|search|where|kahan|kahaan|kahi|kahin|likha|mentioned|written|dhund|dhoond|milta|mila)\b/i.test(q))return quoted[1].trim();
+  const patterns=[
+    /(?:pure|poori|puri|full|entire|all|saari|sare)?\s*(?:\d+\s*)?(?:page|pages|pdf)?\s*(?:mein|me|ke andar|par)?\s*(?:kahin|kahi|kahan|kahaan)\s+(.+?)\s+(?:likha\s+(?:hai|h)|likhi\s+(?:hai|h)|mentioned|written|milta\s+hai|mila\s+hai)\s*[?.!]*$/i,
+    /(?:find|search|locate|dhundo|dhoondo|dekho|check)\s+(?:for\s+)?["']?(.+?)["']?\s*[?.!]*$/i,
+    /(?:where\s+(?:is|does)|kahan\s+(?:likha|hai))\s+["']?(.+?)["']?\s*[?.!]*$/i
+  ];
+  for(const re of patterns){const m=q.match(re);if(m&&m[1]){const term=m[1].trim().replace(/^["']|["']$/g,'');if(term && term.split(/\s+/).length<=8)return term}}
+  return null;
+}
+async function searchLoadedPdf(term){
+  if(!pdfDoc||!term)return false;
+  const originalDoc=pdfDoc, matches=[];let totalOccurrences=0;
+  const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const wholeWord=/^[\p{L}\p{N}_-]+$/u.test(term);
+  const re=new RegExp(wholeWord?`(?<![\p{L}\p{N}_])${escaped}(?![\p{L}\p{N}_])`:escaped,'giu');
+  try{
+    for(let pn=1;pn<=originalDoc.numPages;pn++){
+      if(originalDoc!==pdfDoc)throw new Error('PDF changed while searching');
+      setStatus(`PDF search: page ${pn} of ${originalDoc.numPages}…`,'amber');
+      const page=await originalDoc.getPage(pn);
+      const tc=await page.getTextContent();
+      const text=tc.items.filter(it=>typeof it.str==='string').map(it=>it.str).join(' ');
+      re.lastIndex=0;let m,count=0;
+      while((m=re.exec(text))!==null){count++;if(!m[0].length)re.lastIndex++}
+      if(count){matches.push({page:pn,count});totalOccurrences+=count}
+    }
+    if(!matches.length)log(`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. Selectable text mein “${term}” nahi mila. Agar pages scanned images hain, unke liye OCR chahiye.`);
+    else log(`Bhai, poori ${originalDoc.numPages}-page PDF scan ki. “${term}” ${totalOccurrences} baar mila, ${matches.length} page(s) par: ${matches.map(x=>`Page ${x.page} (${x.count} occurrence${x.count===1?'':'s'})`).join(', ')}. Scanned/image-only pages ka text OCR ke bina search nahi ho sakta.`);
+    return true;
+  }catch(err){console.error('Local PDF search failed:',err);log('PDF ko poora search nahi kar paya: '+(err.message||'unknown error')+'. Koi result confirm nahi kiya gaya.');return true}
+  finally{const current=$('statusText')?.textContent||'';if(!/failed|error|required/i.test(current))setStatus(pdfDoc?`Loaded (${total} pages)`:'Ready','emerald')}
+}
+
 async function handleSubmit(e){
   e.preventDefault();
   const inp=$('cmd'),q=inp.value.trim();if(!q)return;
@@ -1124,6 +1163,7 @@ async function handleSubmit(e){
   }
   if(!pdfDoc){askDarshChat(q);return}
   const fm=q.match(/^(?:find|search)\s+(?:"([^"]+)"|(.+))$/i);if(fm){toggleFR(true);$('frFind').value=(fm[1]||fm[2]).trim();frFind();return}
+  const localSearchTerm=extractLocalSearchTerm(q);if(localSearchTerm){await searchLoadedPdf(localSearchTerm);return}
   // Local Hinglish literal replacement: "anubhaw ki jagah aniket krde".
   // This avoids an unnecessary AI-server round trip for a straightforward replace command.
   const kj=q.match(/^\s*["']?(.+?)["']?\s+ki\s+jagah\s+["']?(.+?)["']?\s+(?:kar\s*de|karde|kr\s*de|krde|kar\s+do|karo|badal\s+de|replace\s+kar\s+de)\s*$/i);
